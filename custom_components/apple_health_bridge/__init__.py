@@ -15,6 +15,7 @@ from .const import (
     CONF_DEVICE_NAME,
     CONF_WEBHOOK_ID,
     DOMAIN,
+    KNOWN_HEALTH_METRICS,
     MAX_PAYLOAD_BYTES,
     PLATFORMS,
 )
@@ -39,16 +40,51 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     async def handle_webhook(
         _hass: HomeAssistant, _webhook_id: str, request: Request
     ) -> Response:
+        if request.method == "GET":
+            return Response(
+                text=manager.selection or "__AHB_SETUP_REQUIRED__",
+                content_type="text/plain",
+            )
         if request.content_length and request.content_length > MAX_PAYLOAD_BYTES:
             return json_response(
                 {"ok": False, "error": "payload_too_large"},
                 status=HTTPStatus.REQUEST_ENTITY_TOO_LARGE,
             )
         try:
-            raw_payload = await request.json()
+            if request.content_type == "application/x-www-form-urlencoded":
+                form = await request.post()
+                selection = str(form.get("selection", "")).strip()
+                if selection:
+                    await manager.async_set_selection(selection)
+                health = {
+                    key: {"value": value}
+                    for key, value in form.items()
+                    if key in KNOWN_HEALTH_METRICS and str(value).strip()
+                }
+                raw_payload = {"version": 1, "health": health}
+                if form.get("latitude") and form.get("longitude"):
+                    raw_payload["location"] = {
+                        key: form[key]
+                        for key in ("latitude", "longitude", "altitude")
+                        if form.get(key)
+                    }
+                wifi = {
+                    key: form[key] for key in ("ssid", "bssid") if form.get(key)
+                }
+                if wifi:
+                    raw_payload["wifi"] = wifi
+            else:
+                raw_payload = await request.json()
         except Exception:
+            raw_body = await request.read()
+            preview = raw_body.decode("utf-8", errors="replace")[:512]
             return json_response(
-                {"ok": False, "error": "invalid_json"},
+                {
+                    "ok": False,
+                    "error": "invalid_json",
+                    "content_type": request.content_type,
+                    "body_preview": preview,
+                },
                 status=HTTPStatus.BAD_REQUEST,
             )
         try:
@@ -60,17 +96,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             )
 
         new_metrics = await manager.async_update(payload)
-        return json_response(
-            {
-                "ok": True,
-                "received": {
-                    "health": len(payload.get("health", {})),
-                    "location": "location" in payload,
-                    "wifi": "wifi" in payload,
-                },
-                "new_entities": sorted(new_metrics),
-            }
-        )
+        parts = [f"健康数据 {len(payload.get('health', {}))} 项"]
+        if "location" in payload:
+            parts.append("位置")
+        if "wifi" in payload:
+            parts.append("Wi-Fi")
+        if new_metrics:
+            parts.append(f"新增实体 {len(new_metrics)} 个")
+        return Response(text="同步成功：" + "、".join(parts), content_type="text/plain")
 
     webhook.async_register(
         hass,
@@ -78,8 +111,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         f"Apple Health Bridge: {manager.device_name}",
         manager.webhook_id,
         handle_webhook,
-        local_only=True,
-        allowed_methods=("POST", "PUT"),
+        # The webhook ID is an unguessable capability token.  Allowing remote
+        # delivery is required for users who intentionally expose Home
+        # Assistant through a reverse proxy or Cloudflare Tunnel.
+        local_only=False,
+        allowed_methods=("GET", "POST", "PUT"),
     )
     entry.async_on_unload(lambda: webhook.async_unregister(hass, manager.webhook_id))
 

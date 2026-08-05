@@ -7,6 +7,7 @@ import argparse
 from copy import deepcopy
 from pathlib import Path
 import plistlib
+import uuid
 from typing import Any
 
 
@@ -87,6 +88,129 @@ for _metric_key, _type_name in _HEALTH_TYPE_ENUMERATIONS.items():
     METRICS[_metric_key]["type"] = _type_name
 
 AUTHORIZATION_KEY = "authorize_all"
+
+# Form fields are deliberately flat: this transport is supported by all
+# Shortcuts versions that support Get Contents of URL, unlike the unavailable
+# dictionary-to-JSON action used by the previous package.
+FORM_VALUE_OUTPUTS = {
+    "steps": "StepsValue",
+    "walking_running_distance": "DistanceValue",
+    "active_energy": "EnergyValue",
+    "exercise_minutes": "ExerciseValue",
+    "stand_hours": "StandValue",
+    "heart_rate": "HeartRateValue",
+    "resting_heart_rate": "RestingHeartRateValue",
+    "blood_oxygen": "BloodOxygenValue",
+    "respiratory_rate": "RespiratoryRateValue",
+    "sleep_duration": "SleepValue",
+    "weight": "WeightValue",
+    "body_fat_percentage": "BodyFatValue",
+    "floors_climbed": "FloorsValue",
+    "latitude": "LatitudeValue",
+    "longitude": "LongitudeValue",
+    "altitude": "AltitudeValue",
+    "ssid": "WifiNameValue",
+    "bssid": "BssidValue",
+}
+
+SUM_OUTPUTS = {"StepsValue", "DistanceValue", "StandValue"}
+
+
+def _form_item(key: str, value: dict[str, Any], item_type: int = 0) -> dict[str, Any]:
+    return {
+        "WFItemType": item_type,
+        "WFKey": {"Value": {"string": key}, "WFSerializationType": "WFTextTokenString"},
+        "WFValue": {"Value": value, "WFSerializationType": "WFTextTokenAttachment"},
+    }
+
+
+def _token(value: dict[str, Any]) -> dict[str, Any]:
+    return {"Value": value, "WFSerializationType": "WFTextTokenAttachment"}
+
+
+def _inject_selection_persistence(shortcut: dict[str, Any]) -> None:
+    """Persist the first multi-selection through the HA webhook."""
+    actions = shortcut.get("WFWorkflowActions", [])
+    choose_index = next(
+        (i for i, a in enumerate(actions)
+         if a.get("WFWorkflowActionIdentifier") == "is.workflow.actions.choosefromlist"),
+        None,
+    )
+    if choose_index is None:
+        raise ValueError("Selection chooser action not found")
+    if any(a.get("WFWorkflowActionIdentifier") == "is.workflow.actions.downloadurl" and a.get("WFWorkflowActionParameters", {}).get("CustomOutputName") == "ConfigResponse" for a in actions):
+        return
+    group = str(uuid.uuid4())
+    endpoint_uuid = str(uuid.uuid4())
+    endpoint = {"WFWorkflowActionIdentifier": "is.workflow.actions.url", "WFWorkflowActionParameters": {"WFURLActionURL": "", "CustomOutputName": "HAEndpoint", "UUID": endpoint_uuid}}
+    url_token = _token({"OutputUUID": endpoint_uuid, "Type": "ActionOutput", "OutputName": "URL"})
+    get_uuid = str(uuid.uuid4())
+    get_action = {
+        "WFWorkflowActionIdentifier": "is.workflow.actions.downloadurl",
+        "WFWorkflowActionParameters": {
+            "WFURL": url_token,
+            "WFHTTPMethod": "GET",
+            "CustomOutputName": "ConfigResponse",
+            "UUID": get_uuid,
+        },
+    }
+    text_uuid = str(uuid.uuid4())
+    saved_text = {"WFWorkflowActionIdentifier": "is.workflow.actions.detect.text", "WFWorkflowActionParameters": {"CustomOutputName": "ConfigText", "UUID": text_uuid, "WFInput": _token({"OutputUUID": get_uuid, "Type": "ActionOutput", "OutputName": "Content"})}}
+    if_action = {
+        "WFWorkflowActionIdentifier": "is.workflow.actions.conditional",
+        "WFWorkflowActionParameters": {
+            "GroupingIdentifier": group,
+            "WFCondition": 100,
+            "WFControlFlowMode": 0,
+            "WFConditionalActionString": "__AHB_SETUP_REQUIRED__",
+            "WFInput": {
+                "Type": "Variable",
+                "Variable": _token(
+                    {
+                        "OutputUUID": text_uuid,
+                        "Type": "ActionOutput",
+                        "OutputName": "ConfigText",
+                    }
+                ),
+            },
+        },
+    }
+    saved_var = {
+        "WFWorkflowActionIdentifier": "is.workflow.actions.setvariable",
+        "WFWorkflowActionParameters": {
+            "WFVariableName": "Selected",
+            "WFInput": _token(
+                {
+                    "OutputUUID": text_uuid,
+                    "Type": "ActionOutput",
+                    "OutputName": "ConfigText",
+                }
+            ),
+            "GroupingIdentifier": group,
+            "UUID": str(uuid.uuid4()),
+        },
+    }
+    otherwise = {
+        "WFWorkflowActionIdentifier": "is.workflow.actions.conditional",
+        "WFWorkflowActionParameters": {"GroupingIdentifier": group, "WFControlFlowMode": 1},
+    }
+    end = {
+        "WFWorkflowActionIdentifier": "is.workflow.actions.conditional",
+        "WFWorkflowActionParameters": {"GroupingIdentifier": group, "WFControlFlowMode": 2, "UUID": str(uuid.uuid4())},
+    }
+    # Existing chooser/text/set-variable actions become the otherwise branch.
+    for action in actions[choose_index:choose_index + 3]:
+        action.setdefault("WFWorkflowActionParameters", {})["GroupingIdentifier"] = group
+    chooser_params = actions[choose_index].setdefault("WFWorkflowActionParameters", {})
+    chooser_params.pop("WFControlFlowMode", None)
+    selection_set_uuid = actions[choose_index + 2]["WFWorkflowActionParameters"].get("UUID", str(uuid.uuid4()))
+    actions[choose_index + 2]["WFWorkflowActionParameters"]["UUID"] = selection_set_uuid
+    actions[choose_index + 3:choose_index + 3] = [otherwise, saved_var, end]
+    actions[choose_index:choose_index] = [endpoint, get_action, saved_text, if_action]
+    for action in actions:
+        params = action.get("WFWorkflowActionParameters") or {}
+        if params.get("CustomOutputName") == "ServerResponse":
+            params["WFURL"] = url_token
 
 
 def _type_filter(type_name: str) -> dict[str, Any]:
@@ -175,16 +299,33 @@ def inject(source: Path, destination: Path) -> tuple[int, int]:
     with source.open("rb") as file_handle:
         shortcut = plistlib.load(file_handle)
 
+    _inject_selection_persistence(shortcut)
+
     found: set[str] = set()
     post_actions = 0
     post_action_index: int | None = None
+    form_output_ids: dict[str, str] = {}
     health_detail_actions = 0
     authorization_actions = 0
     dictionary_writes = 0
     measurement_conversions = 0
+    sum_actions = 0
     for action_index, action in enumerate(shortcut.get("WFWorkflowActions", [])):
         identifier = action.get("WFWorkflowActionIdentifier")
         params = action.get("WFWorkflowActionParameters", {})
+        if (
+            identifier == "is.workflow.actions.detect.number"
+            and params.get("CustomOutputName") in SUM_OUTPUTS
+        ):
+            # HealthKit returns multiple samples for these daily quantities.
+            # Get Numbers keeps the list/last sample; Statistics Sum produces
+            # the actual day total while preserving the existing input token.
+            action["WFWorkflowActionIdentifier"] = "is.workflow.actions.statistics"
+            params["WFStatisticsOperation"] = "Sum"
+            sum_actions += 1
+        output_name = params.get("CustomOutputName")
+        if output_name in FORM_VALUE_OUTPUTS.values():
+            form_output_ids[output_name] = params["UUID"]
 
         # Cherri 2.3.0 keeps the generic rawaction identifier when rawAction()
         # is assigned to a variable. Restore the intended native action here.
@@ -202,12 +343,28 @@ def inject(source: Path, destination: Path) -> tuple[int, int]:
             identifier == "is.workflow.actions.downloadurl"
             and params.get("CustomOutputName") == "ServerResponse"
         ):
-            params["WFJSONValues"] = {
-                "Value": {"Type": "Variable", "VariableName": "Payload"},
-                "WFSerializationType": "WFTextTokenAttachment",
+            missing_outputs = set(FORM_VALUE_OUTPUTS.values()) - set(form_output_ids)
+            if missing_outputs:
+                raise ValueError(f"Missing form value outputs: {sorted(missing_outputs)}")
+            params.pop("WFHTTPBodyFile", None)
+            params.pop("WFJSONValues", None)
+            # The server defaults the protocol version to 1.  Do not emit a
+            # static form value here: iOS treats it as a magic variable in a
+            # form field, showing "unknown variable" and corrupting the POST.
+            items: list[dict[str, Any]] = []
+            items.append(_form_item("selection", {"Type": "Variable", "VariableName": "Selected"}))
+            for key, output_name in FORM_VALUE_OUTPUTS.items():
+                items.append(_form_item(key, {
+                    "Type": "ActionOutput",
+                    "OutputUUID": form_output_ids[output_name],
+                    "OutputName": output_name,
+                }))
+            params["WFFormValues"] = {
+                "Value": {"WFDictionaryFieldValueItems": items},
+                "WFSerializationType": "WFDictionaryFieldValue",
             }
             params["WFHTTPMethod"] = "POST"
-            params["WFHTTPBodyType"] = "JSON"
+            params["WFHTTPBodyType"] = "Form"
             post_actions += 1
             post_action_index = action_index
 
@@ -245,6 +402,8 @@ def inject(source: Path, destination: Path) -> tuple[int, int]:
         raise ValueError(f"Missing HealthKit placeholders: {sorted(missing)}")
     if post_actions != 1:
         raise ValueError(f"Expected one JSON POST action, found {post_actions}")
+    if sum_actions != 3:
+        raise ValueError(f"Expected three daily sum actions, found {sum_actions}")
     if authorization_actions != 1:
         raise ValueError(
             f"Expected one consolidated Health authorization action, "
@@ -274,7 +433,20 @@ def inject(source: Path, destination: Path) -> tuple[int, int]:
     questions = shortcut.get("WFWorkflowImportQuestions", [])
     if len(questions) != 1 or questions[0].get("ParameterKey") != "WFURL":
         raise ValueError("Expected one Webhook URL import question")
-    questions[0]["ActionIndex"] = post_action_index
+    # The imported webhook URL belongs to the shared URL action used by both
+    # the configuration GET and the data POST.
+    endpoint_index = next(
+        (
+            i
+            for i, action in enumerate(shortcut["WFWorkflowActions"])
+            if action.get("WFWorkflowActionParameters", {}).get("CustomOutputName")
+            == "HAEndpoint"
+        ),
+        None,
+    )
+    if endpoint_index is None:
+        raise ValueError("Shared HA endpoint action not found")
+    questions[0]["ActionIndex"] = endpoint_index
 
     destination.parent.mkdir(parents=True, exist_ok=True)
     with destination.open("wb") as file_handle:
