@@ -26,6 +26,17 @@ from .protocol import PayloadError, validate_payload
 _LOGGER = logging.getLogger(__name__)
 
 
+def _form_number(value: object) -> object:
+    """Convert a form-encoded numeric value before protocol validation."""
+    if isinstance(value, str):
+        text = value.strip()
+        try:
+            return float(text)
+        except ValueError:
+            return value
+    return value
+
+
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up one Apple Health Bridge device."""
     manager = AppleHealthBridgeManager(
@@ -57,7 +68,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 if selection:
                     await manager.async_set_selection(selection)
                 health = {
-                    key: {"value": value}
+                    key: {"value": _form_number(value)}
                     for key, value in form.items()
                     if key in KNOWN_HEALTH_METRICS and str(value).strip()
                 }
