@@ -73,6 +73,10 @@ class AppleHealthMetricSensor(AppleHealthBridgeEntity, SensorEntity):
         self._attr_icon = definition.get("icon", "mdi:heart-pulse")
         if device_class := definition.get("device_class"):
             self._attr_device_class = SensorDeviceClass(device_class)
+        # HA rounds the displayed number to this many decimals when set, so
+        # body fat stops showing as 23.60000003814697% and similar.
+        if precision := definition.get("suggested_display_precision"):
+            self._attr_suggested_display_precision = precision
 
     @property
     def available(self) -> bool:

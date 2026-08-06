@@ -170,9 +170,14 @@ def _inject_daily_sums(shortcut: dict[str, Any]) -> int:
         metric_key = params.get("AHBMetric")
         if metric_key not in DAILY_SUM_METRICS:
             continue
-        output_name = params.get("CustomOutputName")
-        if not output_name:
+        # The Get Numbers action emits "<Original>Numbers" (e.g.
+        # "StepsValueNumbers").  Strip that scratch suffix so the
+        # downstream ``{StepsValue}`` reference in the .cherri source
+        # resolves to this Statistics action, not back to the raw list.
+        scratch_name = params.get("CustomOutputName")
+        if not scratch_name or not scratch_name.endswith("Numbers"):
             continue
+        canonical_name = scratch_name[: -len("Numbers")]
         source_uuid = params.get("UUID")
         if not source_uuid:
             continue
@@ -180,13 +185,15 @@ def _inject_daily_sums(shortcut: dict[str, Any]) -> int:
             {
                 "WFWorkflowActionIdentifier": "is.workflow.actions.statistics",
                 "WFWorkflowActionParameters": {
-                    "CustomOutputName": output_name,
+                    "CustomOutputName": canonical_name,
                     "UUID": str(uuid.uuid4()),
+                    # Statistics consumes the scratch Numbers-named output
+                    # produced by Get Numbers.
                     "WFInput": _token(
                         {
                             "OutputUUID": source_uuid,
                             "Type": "ActionOutput",
-                            "OutputName": output_name,
+                            "OutputName": scratch_name,
                         }
                     ),
                     "WFStatisticsOperation": "Sum",
@@ -437,7 +444,14 @@ def inject(source: Path, destination: Path) -> tuple[int, int]:
                 metric_key = params["AHBMetric"]
                 identifier = "is.workflow.actions.detect.number"
                 if metric_key in FORM_VALUE_OUTPUTS:
-                    params["CustomOutputName"] = FORM_VALUE_OUTPUTS[metric_key]
+                    # Renaming Get Numbers to "<Original>Numbers" sidesteps
+                    # the duplicate-identifier "Select Items" picker iOS
+                    # Shortcuts otherwise shows for every {StepsValue}
+                    # reference (the Statistics(Sum) action we inject below
+                    # owns the canonical name).
+                    params["CustomOutputName"] = (
+                        f"{FORM_VALUE_OUTPUTS[metric_key]}Numbers"
+                    )
                 action["WFWorkflowActionParameters"] = params
             elif {"WFInput", "WFContentItemPropertyName"} <= params.keys():
                 identifier = "is.workflow.actions.properties.health.quantity"
@@ -450,27 +464,16 @@ def inject(source: Path, destination: Path) -> tuple[int, int]:
             identifier == "is.workflow.actions.downloadurl"
             and params.get("CustomOutputName") == "ServerResponse"
         ):
-            missing_outputs = set(FORM_VALUE_OUTPUTS.values()) - set(form_output_ids)
-            if missing_outputs:
-                raise ValueError(f"Missing form value outputs: {sorted(missing_outputs)}")
-            params.pop("WFHTTPBodyFile", None)
-            params.pop("WFJSONValues", None)
-            # The server defaults the protocol version to 1.  Do not emit a
-            # static form value here: iOS treats it as a magic variable in a
-            # form field, showing "unknown variable" and corrupting the POST.
-            items: list[dict[str, Any]] = []
-            for key, output_name in FORM_VALUE_OUTPUTS.items():
-                items.append(_form_item(key, {
-                    "Type": "ActionOutput",
-                    "OutputUUID": form_output_ids[output_name],
-                    "OutputName": output_name,
-                }))
-            params["WFFormValues"] = {
-                "Value": {"WFDictionaryFieldValueItems": items},
-                "WFSerializationType": "WFDictionaryFieldValue",
-            }
+            # Only flip the HTTP verb/body type here.  We rebuild WFFormValues
+            # after _inject_daily_sums() so the form payload can point at the
+            # Statistics UUIDs that are inserted later in the pipeline; doing
+            # it here would trigger spurious "Missing form value outputs"
+            # errors for the daily-sum metrics whose Statistics action has
+            # not been injected yet.
             params["WFHTTPMethod"] = "POST"
             params["WFHTTPBodyType"] = "Form"
+            params.pop("WFHTTPBodyFile", None)
+            params.pop("WFJSONValues", None)
             post_actions += 1
             post_action_index = action_index
 

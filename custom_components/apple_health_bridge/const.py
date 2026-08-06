@@ -50,17 +50,19 @@ KNOWN_HEALTH_METRICS: Final = {
         "device_class": "duration",
         "sums_today": True,
     },
-    "heart_rate": {"name": "心率", "unit": "bpm", "icon": "mdi:heart-pulse"},
+    "heart_rate": {"name": "心率", "unit": "bpm", "icon": "mdi:heart-pulse", "suggested_display_precision": 0},
     "resting_heart_rate": {
         "name": "静息心率",
         "unit": "bpm",
         "icon": "mdi:heart-outline",
+        "suggested_display_precision": 0,
     },
-    "blood_oxygen": {"name": "血氧", "unit": "%", "icon": "mdi:water-percent"},
+    "blood_oxygen": {"name": "血氧", "unit": "%", "icon": "mdi:water-percent", "suggested_display_precision": 0},
     "respiratory_rate": {
         "name": "呼吸频率",
         "unit": "breaths/min",
         "icon": "mdi:lungs",
+        "suggested_display_precision": 0,
     },
     "sleep_duration": {
         "name": "睡眠时长",
@@ -73,13 +75,15 @@ KNOWN_HEALTH_METRICS: Final = {
         "unit": "kg",
         "icon": "mdi:scale-bathroom",
         "device_class": "weight",
+        "suggested_display_precision": 1,
     },
     "body_fat_percentage": {
         "name": "体脂率",
         "unit": "%",
         "icon": "mdi:percent",
+        "suggested_display_precision": 1,
     },
-    "floors_climbed": {"name": "爬楼层数", "unit": "floors", "icon": "mdi:stairs", "sums_today": True},
+    "floors_climbed": {"name": "爬楼层数", "unit": "floors", "icon": "mdi:stairs", "sums_today": True, "suggested_display_precision": 0},
 }
 
 WIFI_FIELDS: Final = {
