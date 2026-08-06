@@ -8,3 +8,11 @@ htmlcov/
 .DS_Store
 Thumbs.db
 *.zip
+
+# Local maintenance SSH key (refuses inclusion in version control)
+.codex-ha-maintenance
+.codex-ha-maintenance.pub
+
+# Intermediate Cherri build artefacts
+shortcut/build/
+

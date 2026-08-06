@@ -21,26 +21,35 @@ ATTR_WIFI: Final = "wifi"
 SIGNAL_UPDATE: Final = f"{DOMAIN}_update"
 
 KNOWN_HEALTH_METRICS: Final = {
-    "steps": {"name": "步数", "unit": "steps", "icon": "mdi:walk"},
+    "steps": {"name": "步数", "unit": "steps", "icon": "mdi:walk", "sums_today": True},
     "walking_running_distance": {
         "name": "步行与跑步距离",
         "unit": "km",
         "icon": "mdi:map-marker-distance",
         "device_class": "distance",
+        "sums_today": True,
     },
     "active_energy": {
         "name": "活动能量",
         "unit": "kcal",
         "icon": "mdi:fire",
         "device_class": "energy",
+        "sums_today": True,
     },
     "exercise_minutes": {
         "name": "锻炼时间",
         "unit": "min",
         "icon": "mdi:timer-outline",
         "device_class": "duration",
+        "sums_today": True,
     },
-    "stand_hours": {"name": "站立小时", "unit": "h", "icon": "mdi:human-handsup"},
+    "stand_hours": {
+        "name": "站立小时",
+        "unit": "h",
+        "icon": "mdi:human-handsup",
+        "device_class": "duration",
+        "sums_today": True,
+    },
     "heart_rate": {"name": "心率", "unit": "bpm", "icon": "mdi:heart-pulse"},
     "resting_heart_rate": {
         "name": "静息心率",
@@ -70,7 +79,7 @@ KNOWN_HEALTH_METRICS: Final = {
         "unit": "%",
         "icon": "mdi:percent",
     },
-    "floors_climbed": {"name": "爬楼层数", "unit": "floors", "icon": "mdi:stairs"},
+    "floors_climbed": {"name": "爬楼层数", "unit": "floors", "icon": "mdi:stairs", "sums_today": True},
 }
 
 WIFI_FIELDS: Final = {

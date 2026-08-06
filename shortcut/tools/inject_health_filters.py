@@ -12,38 +12,27 @@ from typing import Any
 
 
 METRICS: dict[str, dict[str, Any]] = {
-    # Health sample types are localized enum values in Shortcuts.  This bridge
-    # targets Simplified Chinese iOS, so use the names searchable in its editor.
-    "steps": {"type": "步数", "days": 1, "group": "Day"},
+    # Daily totals are produced through ``Statistics(Sum)`` on today's raw
+    # HealthKit samples (see ``DAILY_SUM_METRICS``).  We deliberately do NOT
+    # enable ``WFHKSampleFilteringGroupBy=Day`` because on current iOS it
+    # does not produce a stable daily aggregate for Active Calories, Exercise
+    # Time, or Stand Time -- it returned the latest 1-minute exercise segment
+    # or a multi-day cumulative count instead of today's sum.
+    "steps": {"type": "步数", "days": 1},
     "walking_running_distance": {
-        "type": "步行+跑步距离",
+        "type": "步行与跑步距离",
         "days": 1,
-        "group": "Day",
     },
-    "active_energy": {
-        "type": "活动能量",
-        "days": 1,
-        "group": "Day",
-        "limit": 1,
-    },
-    "exercise_minutes": {
-        "type": "锻炼分钟数",
-        "days": 1,
-        "group": "Day",
-        "limit": 1,
-    },
-    "stand_hours": {
-        "type": "站立小时数",
-        "days": 1,
-        "group": "Day",
-    },
+    "active_energy": {"type": "活动能量", "days": 1},
+    "exercise_minutes": {"type": "锻炼时间", "days": 1},
+    "stand_hours": {"type": "站立小时", "days": 1},
     "heart_rate": {"type": "心率", "days": 7, "limit": 1},
     "resting_heart_rate": {
         "type": "静息心率",
         "days": 7,
         "limit": 1,
     },
-    "blood_oxygen": {"type": "血氧饱和度", "days": 7, "limit": 1},
+    "blood_oxygen": {"type": "血氧", "days": 7, "limit": 1},
     "respiratory_rate": {
         "type": "呼吸频率",
         "days": 7,
@@ -52,18 +41,25 @@ METRICS: dict[str, dict[str, Any]] = {
     "sleep_duration": {"type": "睡眠", "days": 2},
     "weight": {"type": "体重", "days": 30, "limit": 1},
     "body_fat_percentage": {
-        "type": "体脂百分比",
+        "type": "体脂率",
         "days": 30,
         "limit": 1,
     },
-    "floors_climbed": {
-        "type": "爬楼层数",
-        "days": 1,
-        "group": "Day",
-        "limit": 1,
-    },
+    "floors_climbed": {"type": "爬楼层数", "days": 1},
 }
 
+# Metrics whose Get Numbers output must be summed over today's samples to
+# produce a stable daily total.  The injector inserts a Statistics(Sum)
+# action between the Get Numbers action and the dictionary construction so
+# downstream code references the summed value instead of the raw list.
+DAILY_SUM_METRICS: frozenset[str] = frozenset({
+    "steps",
+    "walking_running_distance",
+    "active_energy",
+    "exercise_minutes",
+    "stand_hours",
+    "floors_climbed",
+})
 # Stored values for the HealthKit type picker. These are intentionally not
 # localized display labels: Shortcuts persists this canonical enumeration even
 # when its interface language is Chinese.
@@ -111,9 +107,6 @@ FORM_VALUE_OUTPUTS = {
     "bssid": "BssidValue",
 }
 
-SUM_OUTPUTS = {"StepsValue", "DistanceValue", "StandValue"}
-
-
 def _form_item(key: str, value: dict[str, Any], item_type: int = 0) -> dict[str, Any]:
     return {
         "WFItemType": item_type,
@@ -159,50 +152,50 @@ def _replace_output_references(
 
 
 def _inject_daily_sums(shortcut: dict[str, Any]) -> int:
-    """Sum ordinary numbers produced by Get Numbers for daily Health samples."""
+    """Insert a Statistics(Sum) action after each Get Numbers action whose
+    AHBMetric belongs to :data:`DAILY_SUM_METRICS`.
+
+    The action takes the numeric list produced by ``is.workflow.actions.detect.number``
+    and emits a single sum under the same ``CustomOutputName`` so downstream
+    dictionary construction references the daily total instead of the raw list.
+    """
     actions = shortcut.get("WFWorkflowActions", [])
-    replacements: dict[tuple[str, str], tuple[str, str]] = {}
-    sums: list[dict[str, Any]] = []
+    rebuilt: list[dict[str, Any]] = []
+    inserted = 0
     for action in actions:
+        rebuilt.append(action)
+        params = action.get("WFWorkflowActionParameters", {})
         if action.get("WFWorkflowActionIdentifier") != "is.workflow.actions.detect.number":
             continue
-        params = action.get("WFWorkflowActionParameters", {})
-        output_name = params.get("CustomOutputName")
-        if output_name not in SUM_OUTPUTS:
+        metric_key = params.get("AHBMetric")
+        if metric_key not in DAILY_SUM_METRICS:
             continue
-        source_uuid = params["UUID"]
-        numeric_name = f"{output_name}Numbers"
-        total_uuid = str(uuid.uuid4())
-        params["CustomOutputName"] = numeric_name
-        replacements[(source_uuid, output_name)] = (total_uuid, output_name)
-        sums.append(
+        output_name = params.get("CustomOutputName")
+        if not output_name:
+            continue
+        source_uuid = params.get("UUID")
+        if not source_uuid:
+            continue
+        rebuilt.append(
             {
-                "after": action,
-                "action": {
-                    "WFWorkflowActionIdentifier": "is.workflow.actions.statistics",
-                    "WFWorkflowActionParameters": {
-                        "CustomOutputName": output_name,
-                        "UUID": total_uuid,
-                        "WFInput": _token(
-                            {
-                                "OutputUUID": source_uuid,
-                                "Type": "ActionOutput",
-                                "OutputName": numeric_name,
-                            }
-                        ),
-                        "WFStatisticsOperation": "Sum",
-                    },
+                "WFWorkflowActionIdentifier": "is.workflow.actions.statistics",
+                "WFWorkflowActionParameters": {
+                    "CustomOutputName": output_name,
+                    "UUID": str(uuid.uuid4()),
+                    "WFInput": _token(
+                        {
+                            "OutputUUID": source_uuid,
+                            "Type": "ActionOutput",
+                            "OutputName": output_name,
+                        }
+                    ),
+                    "WFStatisticsOperation": "Sum",
                 },
             }
         )
-    if len(sums) != 3:
-        return len(sums)
-    for action in actions:
-        _replace_output_references(action.get("WFWorkflowActionParameters", {}), replacements)
-    for item in reversed(sums):
-        index = actions.index(item["after"])
-        actions.insert(index + 1, item["action"])
-    return len(sums)
+        inserted += 1
+    shortcut["WFWorkflowActions"] = rebuilt
+    return inserted
 
 
 def _inject_selection_persistence(shortcut: dict[str, Any]) -> None:
@@ -416,10 +409,6 @@ def inject(source: Path, destination: Path) -> tuple[int, int]:
         shortcut = plistlib.load(file_handle)
 
     _inject_selection_persistence(shortcut)
-    # HealthKit's Day grouping produces the daily aggregate directly. Do not
-    # add a second Statistics action: on current iOS it can return an empty
-    # value when fed Health quantity conversions.
-    sum_actions = 0
 
     found: set[str] = set()
     post_actions = 0
@@ -439,8 +428,17 @@ def inject(source: Path, destination: Path) -> tuple[int, int]:
         # Cherri 2.3.0 keeps the generic rawaction identifier when rawAction()
         # is assigned to a variable. Restore the intended native action here.
         if identifier == "is.workflow.actions.rawaction":
-            if "AHBMetric" in params:
+            if "AHBMetric" in params and "WFInput" not in params:
                 identifier = "is.workflow.actions.filter.health.quantity"
+            elif "AHBMetric" in params and "WFInput" in params:
+                # Daily-sum metrics use a placeholder rawAction for Get Numbers
+                # so the injector can attach the canonical CustomOutputName and
+                # follow it up with a Statistics(Sum) action below.
+                metric_key = params["AHBMetric"]
+                identifier = "is.workflow.actions.detect.number"
+                if metric_key in FORM_VALUE_OUTPUTS:
+                    params["CustomOutputName"] = FORM_VALUE_OUTPUTS[metric_key]
+                action["WFWorkflowActionParameters"] = params
             elif {"WFInput", "WFContentItemPropertyName"} <= params.keys():
                 identifier = "is.workflow.actions.properties.health.quantity"
                 health_detail_actions += 1
@@ -505,6 +503,49 @@ def inject(source: Path, destination: Path) -> tuple[int, int]:
         )
         found.add(metric_key)
 
+    # Daily-sum metrics require a Statistics(Sum) action between Get Numbers
+    # and the dictionary construction, otherwise iOS would ship the raw list
+    # of sample numbers to Home Assistant instead of today's total.
+    sum_actions = _inject_daily_sums(shortcut)
+    if sum_actions != len(DAILY_SUM_METRICS):
+        raise ValueError(
+            f"Expected {len(DAILY_SUM_METRICS)} daily-sum Statistics actions, "
+            f"found {sum_actions}"
+        )
+
+    # The Statistics actions sit AFTER their corresponding Get Numbers and
+    # carry the same CustomOutputName, so they must override ``form_output_ids``
+    # for daily-sum metrics.  Re-scan the action list to pick up the right
+    # UUIDs, then rebuild the POST form payload so the form references the
+    # summed values instead of the raw sample lists.
+    form_output_ids = {
+        output_name: action["WFWorkflowActionParameters"]["UUID"]
+        for action in shortcut["WFWorkflowActions"]
+        if (output_name := action.get("WFWorkflowActionParameters", {}).get("CustomOutputName"))
+        in FORM_VALUE_OUTPUTS.values()
+    }
+    for action in shortcut["WFWorkflowActions"]:
+        params = action.get("WFWorkflowActionParameters", {})
+        if (
+            action.get("WFWorkflowActionIdentifier") == "is.workflow.actions.downloadurl"
+            and params.get("CustomOutputName") == "ServerResponse"
+        ):
+            missing_outputs = set(FORM_VALUE_OUTPUTS.values()) - set(form_output_ids)
+            if missing_outputs:
+                raise ValueError(f"Missing form value outputs: {sorted(missing_outputs)}")
+            items = [
+                _form_item(key, {
+                    "Type": "ActionOutput",
+                    "OutputUUID": form_output_ids[output_name],
+                    "OutputName": output_name,
+                })
+                for key, output_name in FORM_VALUE_OUTPUTS.items()
+            ]
+            params["WFFormValues"] = {
+                "Value": {"WFDictionaryFieldValueItems": items},
+                "WFSerializationType": "WFDictionaryFieldValue",
+            }
+
     missing = set(METRICS) - found
     if missing:
         raise ValueError(f"Missing HealthKit placeholders: {sorted(missing)}")
@@ -515,16 +556,20 @@ def inject(source: Path, destination: Path) -> tuple[int, int]:
             f"Expected one consolidated Health authorization action, "
             f"found {authorization_actions}"
         )
-    # Every metric reads Value (or Duration for Sleep); all non-Sleep metrics
-    # also read Unit so values are never coerced through Convert Measurement.
-    expected_health_details = len(METRICS) + len(METRICS) - 1
+    # Health detail layout:
+    #   - 13 metrics x 1 Value-detail (Sleep uses Duration instead) = 13
+    #   - 6 non-daily non-Sleep metrics x 1 extra Unit-detail = 6
+    # Total = 13 + 6 = 19.
+    expected_health_details = len(METRICS) + (
+        len(METRICS) - 1 - len(DAILY_SUM_METRICS)
+    )
     if health_detail_actions != expected_health_details:
         raise ValueError(
             f"Expected {expected_health_details} Health detail actions, "
             f"found {health_detail_actions}"
         )
-    if dictionary_writes != 47:
-        raise ValueError(f"Expected 47 dictionary writes, found {dictionary_writes}")
+    if dictionary_writes != 41:
+        raise ValueError(f"Expected 41 dictionary writes, found {dictionary_writes}")
     if measurement_conversions:
         raise ValueError(
             f"Expected no Convert Measurement actions, found {measurement_conversions}"

@@ -47,11 +47,9 @@ if @Selected contains "步数" {
     const StepsSamples = rawAction("is.workflow.actions.filter.health.quantity", {"AHBMetric": "steps"})
     if StepsSamples {
         const StepsMeasurements = rawAction("is.workflow.actions.properties.health.quantity", {"WFInput": "${StepsSamples}", "WFContentItemPropertyName": "Value"})
-        const StepsUnit = rawAction("is.workflow.actions.properties.health.quantity", {"WFInput": "${StepsSamples}", "WFContentItemPropertyName": "Unit"})
-        const StepsValue = getNumbers(StepsMeasurements)
+        const StepsValue = rawAction("is.workflow.actions.detect.number", {"AHBMetric": "steps", "WFInput": "${StepsMeasurements}"})
         if StepsValue {
-            @Metric = {"name": "步数"}
-            @Metric = setValue(@Metric, "unit", "{StepsUnit}")
+            @Metric = {"unit": "steps", "name": "步数"}
             @Metric = setValue(@Metric, "value", "{StepsValue}")
             @HealthData = setValue(@HealthData, "steps", "{@Metric}")
         }
@@ -62,12 +60,11 @@ if @Selected contains "步行与跑步距离" {
     const DistanceSamples = rawAction("is.workflow.actions.filter.health.quantity", {"AHBMetric": "walking_running_distance"})
     if DistanceSamples {
         const DistanceMeasurements = rawAction("is.workflow.actions.properties.health.quantity", {"WFInput": "${DistanceSamples}", "WFContentItemPropertyName": "Value"})
-        const DistanceUnit = rawAction("is.workflow.actions.properties.health.quantity", {"WFInput": "${DistanceSamples}", "WFContentItemPropertyName": "Unit"})
-        const DistanceValue = getNumbers(DistanceMeasurements)
-        if DistanceValue {
-            @Metric = {"name": "步行与跑步距离"}
-            @Metric = setValue(@Metric, "unit", "{DistanceUnit}")
-            @Metric = setValue(@Metric, "value", "{DistanceValue}")
+        const DistanceValue = rawAction("is.workflow.actions.detect.number", {"AHBMetric": "walking_running_distance", "WFInput": "${DistanceMeasurements}"})
+        const DistanceKm = DistanceValue / 1000
+        if DistanceKm {
+            @Metric = {"unit": "km", "name": "步行与跑步距离"}
+            @Metric = setValue(@Metric, "value", "{DistanceKm}")
             @HealthData = setValue(@HealthData, "walking_running_distance", "{@Metric}")
         }
     }
@@ -77,11 +74,9 @@ if @Selected contains "活动能量" {
     const EnergySamples = rawAction("is.workflow.actions.filter.health.quantity", {"AHBMetric": "active_energy"})
     if EnergySamples {
         const EnergyMeasurements = rawAction("is.workflow.actions.properties.health.quantity", {"WFInput": "${EnergySamples}", "WFContentItemPropertyName": "Value"})
-        const EnergyUnit = rawAction("is.workflow.actions.properties.health.quantity", {"WFInput": "${EnergySamples}", "WFContentItemPropertyName": "Unit"})
-        const EnergyValue = getNumbers(EnergyMeasurements)
+        const EnergyValue = rawAction("is.workflow.actions.detect.number", {"AHBMetric": "active_energy", "WFInput": "${EnergyMeasurements}"})
         if EnergyValue {
-            @Metric = {"name": "活动能量"}
-            @Metric = setValue(@Metric, "unit", "{EnergyUnit}")
+            @Metric = {"unit": "kcal", "name": "活动能量"}
             @Metric = setValue(@Metric, "value", "{EnergyValue}")
             @HealthData = setValue(@HealthData, "active_energy", "{@Metric}")
         }
@@ -92,12 +87,11 @@ if @Selected contains "锻炼时间" {
     const ExerciseSamples = rawAction("is.workflow.actions.filter.health.quantity", {"AHBMetric": "exercise_minutes"})
     if ExerciseSamples {
         const ExerciseMeasurements = rawAction("is.workflow.actions.properties.health.quantity", {"WFInput": "${ExerciseSamples}", "WFContentItemPropertyName": "Value"})
-        const ExerciseUnit = rawAction("is.workflow.actions.properties.health.quantity", {"WFInput": "${ExerciseSamples}", "WFContentItemPropertyName": "Unit"})
-        const ExerciseValue = getNumbers(ExerciseMeasurements)
-        if ExerciseValue {
-            @Metric = {"name": "锻炼时间"}
-            @Metric = setValue(@Metric, "unit", "{ExerciseUnit}")
-            @Metric = setValue(@Metric, "value", "{ExerciseValue}")
+        const ExerciseValue = rawAction("is.workflow.actions.detect.number", {"AHBMetric": "exercise_minutes", "WFInput": "${ExerciseMeasurements}"})
+        const ExerciseMinutes = ExerciseValue / 60
+        if ExerciseMinutes {
+            @Metric = {"unit": "min", "name": "锻炼时间"}
+            @Metric = setValue(@Metric, "value", "{ExerciseMinutes}")
             @HealthData = setValue(@HealthData, "exercise_minutes", "{@Metric}")
         }
     }
@@ -107,11 +101,9 @@ if @Selected contains "站立小时" {
     const StandSamples = rawAction("is.workflow.actions.filter.health.quantity", {"AHBMetric": "stand_hours"})
     if StandSamples {
         const StandMeasurements = rawAction("is.workflow.actions.properties.health.quantity", {"WFInput": "${StandSamples}", "WFContentItemPropertyName": "Value"})
-        const StandUnit = rawAction("is.workflow.actions.properties.health.quantity", {"WFInput": "${StandSamples}", "WFContentItemPropertyName": "Unit"})
-        const StandValue = getNumbers(StandMeasurements)
+        const StandValue = rawAction("is.workflow.actions.detect.number", {"AHBMetric": "stand_hours", "WFInput": "${StandMeasurements}"})
         if StandValue {
-            @Metric = {"name": "站立小时"}
-            @Metric = setValue(@Metric, "unit", "{StandUnit}")
+            @Metric = {"unit": "h", "name": "站立小时"}
             @Metric = setValue(@Metric, "value", "{StandValue}")
             @HealthData = setValue(@HealthData, "stand_hours", "{@Metric}")
         }
@@ -231,11 +223,9 @@ if @Selected contains "爬楼层数" {
     const FloorsSamples = rawAction("is.workflow.actions.filter.health.quantity", {"AHBMetric": "floors_climbed"})
     if FloorsSamples {
         const FloorsMeasurements = rawAction("is.workflow.actions.properties.health.quantity", {"WFInput": "${FloorsSamples}", "WFContentItemPropertyName": "Value"})
-        const FloorsUnit = rawAction("is.workflow.actions.properties.health.quantity", {"WFInput": "${FloorsSamples}", "WFContentItemPropertyName": "Unit"})
-        const FloorsValue = getNumbers(FloorsMeasurements)
+        const FloorsValue = rawAction("is.workflow.actions.detect.number", {"AHBMetric": "floors_climbed", "WFInput": "${FloorsMeasurements}"})
         if FloorsValue {
-            @Metric = {"name": "爬楼层数"}
-            @Metric = setValue(@Metric, "unit", "{FloorsUnit}")
+            @Metric = {"unit": "floors", "name": "爬楼层数"}
             @Metric = setValue(@Metric, "value", "{FloorsValue}")
             @HealthData = setValue(@HealthData, "floors_climbed", "{@Metric}")
         }
